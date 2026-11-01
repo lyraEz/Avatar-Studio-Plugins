@@ -1,4 +1,5 @@
-Movement & Vision Tools - plugin for Avatar Studio.
+--[[
+    Movement & Vision Tools - plugin for Avatar Studio.
 
     What it adds (all in the Plugins tab of Avatar Studio):
       * Noclip          walk through walls and objects

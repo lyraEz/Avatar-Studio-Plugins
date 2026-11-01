@@ -31,6 +31,8 @@ Algumas ferramentas dependem do seu executor (FPS limit e anti-kick). Se ele nã
 1. Pegue o **link raw** do plugin. No GitHub: abra o arquivo `.lua`, toque em **Raw** e copie o endereço. Ele começa com `https://raw.githubusercontent.com/`.
 2. Na aba **Plugins**, cole o link na caixa e toque em **Install**.
 
+**Ou sem link:** coloque o arquivo `.lua` do plugin na pasta `workspace` do seu executor, dentro de **Avatar-copier plugins**. Abra a aba Plugins (ou toque em **Check the folder**) e ele aparece, já ligado. Depois de editar o arquivo, toque em **Reload**.
+
 Os plugins ficam salvos na pasta `workspace` do seu executor, dentro de **Avatar-copier plugins**. Cada um tem um botão pra ligar e desligar, **Update** pra baixar a versão mais nova, e **Remove**.
 
 > **Só instale plugins de quem você confia.** Um plugin roda código com acesso total do seu executor, igual a qualquer script que você executa.

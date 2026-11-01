@@ -31,6 +31,8 @@ Some tools need your executor to support them (FPS limit and anti-kick). If it d
 1. Get the plugin's **raw link**. On GitHub: open the `.lua` file, tap **Raw**, and copy the address. It starts with `https://raw.githubusercontent.com/`.
 2. In the **Plugins** tab, paste the link in the box and tap **Install**.
 
+**Or without a link:** put the plugin's `.lua` file in your executor's `workspace` folder, inside **Avatar-copier plugins**. Open the Plugins tab (or tap **Check the folder**) and it shows up, already on. After you edit the file, tap **Reload**.
+
 Plugins are saved in your executor's `workspace` folder, inside **Avatar-copier plugins**. Each one has a switch to turn it on or off, **Update** to download its newest version, and **Remove**.
 
 > **Only install plugins from people you trust.** A plugin runs code with your executor's full access, like any script you execute.

@@ -26,7 +26,7 @@ local Lighting = game:GetService("Lighting")
 
 return {
     Name = "Lyra Tools",
-    Version = "1.0.0",
+    Version = "1.0.1",
     Author = "lyraEz",
     Description = "Anti-fling, anti-kick, anti-AFK, FPS boost, an FPS and ping counter, rejoin and server hop.",
 
@@ -164,19 +164,155 @@ return {
         -- FPS BOOST WITHOUT CHANGING HOW THE GAME LOOKS
         ------------------------------------------------------------------------------------------------------------
         api.section({Title = "Performance", Text = "The first two options change nothing you see. Low graphics does."})
-        local caps = {["Don't change"] = false, ["60"] = 60, ["120"] = 120, ["144"] = 144, ["240"] = 240, ["Unlimited"] = 1000}
-        local originalCap = type(getfpscap) == "function" and select(2, pcall(getfpscap)) or nil
-        local cappedByUs = false
-        local function setCap(choice)
-            if type(setfpscap) ~= "function" then
-                if choice ~= "Don't change" then api.notify("Your executor can't change the FPS limit.", "warning") end
-                return
+        local caps = {
+            ["Don't change"] = false,
+            ["60"] = {Setter = 60, Flag = 60},
+            ["120"] = {Setter = 120, Flag = 120},
+            ["144"] = {Setter = 144, Flag = 144},
+            ["240"] = {Setter = 240, Flag = 240},
+            ["Unlimited"] = {Setter = 0, Flag = 10000},
+        }
+
+        -- Some executors expose their functions only through the global environment given to scripts.
+        local environments = {}
+        if type(getgenv) == "function" then
+            local ok, environment = pcall(getgenv)
+            if ok and type(environment) == "table" then environments[#environments + 1] = environment end
+        end
+        if type(getfenv) == "function" then
+            local ok, environment = pcall(getfenv, 0)
+            if ok and type(environment) == "table" then environments[#environments + 1] = environment end
+        end
+        local function executorValue(name)
+            for _, environment in ipairs(environments) do
+                local value = environment[name]
+                if value ~= nil then return value end
             end
+            return nil
+        end
+        local function executorFunction(name, direct)
+            if type(direct) == "function" then return direct end
+            local value = executorValue(name)
+            return type(value) == "function" and value or nil
+        end
+
+        local setFpsCap = executorFunction("setfpscap", setfpscap) or executorFunction("set_fps_cap", set_fps_cap)
+        local getFpsCap = executorFunction("getfpscap", getfpscap) or executorFunction("get_fps_cap", get_fps_cap)
+        local synApi = executorValue("syn")
+        if type(synApi) == "table" then
+            setFpsCap = setFpsCap or (type(synApi.set_fps_cap) == "function" and synApi.set_fps_cap or nil)
+            getFpsCap = getFpsCap or (type(synApi.get_fps_cap) == "function" and synApi.get_fps_cap or nil)
+        end
+        local setFFlag = executorFunction("setfflag", setfflag)
+        local getFFlag = executorFunction("getfflag", getfflag)
+        local targetFlag = "DFIntTaskSchedulerTargetFps"
+        local limitFlag = "FFlagTaskSchedulerLimitTargetFpsTo2402"
+
+        local function readCap()
+            if not getFpsCap then return nil end
+            local ok, value = pcall(getFpsCap)
+            if ok and type(value) == "number" and value == value and value >= 0 then return value end
+            return nil
+        end
+        local function readFlag(name)
+            if not getFFlag then return nil end
+            local ok, value = pcall(getFFlag, name)
+            if ok and value ~= nil then return tostring(value) end
+            return nil
+        end
+        local function writeFlag(name, value)
+            if not setFFlag then return false end
+            local ok, result = pcall(setFFlag, name, tostring(value))
+            return ok and result ~= false
+        end
+
+        local originalTargetFlag = readFlag(targetFlag)
+        local originalLimitFlag = readFlag(limitFlag)
+        local originalCap = readCap()
+        if originalCap == math.huge then
+            originalCap = 0
+        elseif originalCap == nil then
+            local flagCap = tonumber(originalTargetFlag)
+            originalCap = flagCap and flagCap == flagCap and flagCap < math.huge and flagCap >= 0 and flagCap or 60
+        end
+        local originalFlagCap = originalCap > 0 and originalCap < math.huge and originalCap or 10000
+        local fpsCap = {Target = nil, SetterTouched = false, TargetFlagTouched = false, LimitFlagTouched = false}
+
+        local function restoreLimitFlag()
+            if not fpsCap.LimitFlagTouched then return true end
+            if originalLimitFlag ~= nil and writeFlag(limitFlag, originalLimitFlag) then
+                fpsCap.LimitFlagTouched = false
+                return true
+            end
+            return false
+        end
+        local function callSetter(value)
+            if not setFpsCap then return false end
+            local ok, result = pcall(setFpsCap, value)
+            return ok and result ~= false
+        end
+        local function applyCap(target, showWarning)
+            if target.Flag <= 240 then restoreLimitFlag() end
+
+            local setterApplied = callSetter(target.Setter)
+            fpsCap.SetterTouched = fpsCap.SetterTouched or setterApplied
+
+            -- Apply the scheduler target too when available. It covers executors whose setfpscap is a no-op.
+            local flagApplied = false
+            local changedLimitNow = false
+            if setFFlag then
+                if target.Flag > 240 and originalLimitFlag ~= nil then
+                    local limitApplied = writeFlag(limitFlag, "False")
+                    changedLimitNow = limitApplied and not fpsCap.LimitFlagTouched
+                    fpsCap.LimitFlagTouched = fpsCap.LimitFlagTouched or limitApplied
+                end
+                flagApplied = writeFlag(targetFlag, math.floor(target.Flag))
+                fpsCap.TargetFlagTouched = fpsCap.TargetFlagTouched or flagApplied
+                if changedLimitNow and not flagApplied then restoreLimitFlag() end
+            end
+
+            if setterApplied or flagApplied then
+                fpsCap.Target = target
+                return true
+            end
+            fpsCap.Target = nil
+            if showWarning then
+                local message = not setFpsCap and not setFFlag
+                    and "Your executor can't change the FPS limit."
+                    or "Your executor couldn't apply the FPS limit."
+                api.notify(message, "warning")
+            end
+            return false
+        end
+        local function restoreCap(showWarning)
+            local failed = false
+            if fpsCap.TargetFlagTouched then
+                if writeFlag(targetFlag, originalTargetFlag or math.floor(originalFlagCap)) then
+                    fpsCap.TargetFlagTouched = false
+                else
+                    failed = true
+                end
+            end
+            if not restoreLimitFlag() then failed = true end
+            if fpsCap.SetterTouched then
+                if callSetter(originalCap) then
+                    fpsCap.SetterTouched = false
+                else
+                    failed = true
+                end
+            end
+            fpsCap.Target = nil
+            if failed and showWarning then
+                api.notify("Your executor couldn't restore the previous FPS limit.", "warning")
+            end
+            return not failed
+        end
+        local function setCap(choice)
             local cap = caps[choice]
-            if cap then
-                setfpscap(cap); cappedByUs = true
-            elseif cappedByUs then
-                setfpscap(type(originalCap) == "number" and originalCap or 60); cappedByUs = false
+            if type(cap) == "table" then
+                applyCap(cap, true)
+            elseif choice == "Don't change" then
+                restoreCap(true)
             end
         end
         local capChoice = api.dropdown({
@@ -188,7 +324,10 @@ return {
             Changed = setCap,
         })
         if capChoice.Get() ~= "Don't change" then setCap(capChoice.Get()) end -- a saved limit comes back at start
-        api.onUnload(function() if cappedByUs then setCap("Don't change") end end)
+        api.connect(UserInputService.WindowFocused, function()
+            if fpsCap.Target ~= nil then applyCap(fpsCap.Target, false) end
+        end)
+        api.onUnload(function() restoreCap(false) end)
 
         local background = {On = false}
         api.connect(UserInputService.WindowFocusReleased, function()
@@ -333,10 +472,14 @@ return {
             counter.Label = label
         end
         local frames = 0
+        local lastSample = os.clock()
         api.connect(RunService.RenderStepped, function() frames = frames + 1 end)
         api.every(0.5, function()
-            local fps = frames * 2
+            local now = os.clock()
+            local elapsed = now - lastSample
+            local fps = elapsed > 0 and math.floor(frames / elapsed + 0.5) or 0
             frames = 0
+            lastSample = now
             if counter.Label and counter.Label.Parent then
                 local ok, ping = pcall(function() return player:GetNetworkPing() end)
                 counter.Label.Text = string.format("FPS %d  ·  %s ms", fps, ok and tostring(math.floor(ping * 1000 + 0.5)) or "--")

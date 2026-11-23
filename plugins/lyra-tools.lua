@@ -26,7 +26,7 @@ local Lighting = game:GetService("Lighting")
 
 return {
     Name = "Lyra Tools",
-    Version = "1.0.1",
+    Version = "1.0.2",
     Author = "lyraEz",
     Description = "Anti-fling, anti-kick, anti-AFK, FPS boost, an FPS and ping counter, rejoin and server hop.",
 
@@ -38,6 +38,10 @@ return {
         -- Flingers spin their character very fast and touch you. Two things stop it:
         --   1. Other players' bodies don't collide with you (on your screen only, they can't push you).
         --   2. If you still get thrown (very fast sideways or spinning), you are stopped and put back where you were.
+        --      Running fast on purpose is not a throw: a speed setting, a game's speed upgrades or a dash go the way you
+        --      steer. Only a speed well over your walk speed in another direction, or a fast spin, counts as a fling.
+        --      (1.0.1 and older stopped every run over 250 studs a second, so at a high walk speed you were pulled back
+        --      over and over and could not move.)
         ------------------------------------------------------------------------------------------------------------
         api.section({Title = "Protection"})
         local fling = {On = false, Parts = {}, Changed = setmetatable({}, {__mode = "k"}), Safe = nil}
@@ -73,13 +77,18 @@ return {
             local humanoid = character and character:FindFirstChildOfClass("Humanoid")
             if not root or not humanoid or humanoid.SeatPart then fling.Safe = nil; return end
             local velocity = root.AssemblyLinearVelocity
-            local sideways = Vector3.new(velocity.X, 0, velocity.Z).Magnitude -- falling fast is not a fling
+            local flat = Vector3.new(velocity.X, 0, velocity.Z) -- falling fast is not a fling
+            local sideways = flat.Magnitude
             local spin = root.AssemblyAngularVelocity.Magnitude
-            if sideways > 250 or spin > 50 then
+            local walk = humanoid.WalkSpeed
+            -- Going the way you steer is your own run, however fast.
+            local steer = humanoid.MoveDirection
+            local ownRun = steer.Magnitude > 0.1 and sideways > 1 and flat.Unit:Dot(steer.Unit) > 0.7
+            if spin > 50 or (sideways > math.max(250, walk * 2) and not ownRun) then
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 if fling.Safe then root.CFrame = fling.Safe end
-            elseif sideways < 100 and spin < 15 then
+            elseif spin < 15 and (ownRun or sideways < math.max(100, walk * 1.2)) then
                 fling.Safe = root.CFrame
             end
         end)

@@ -22,9 +22,10 @@ What it has:
 | Background mode | Stops drawing the game while Roblox is in the background. Less heat and battery. |
 | Low graphics | More FPS: removes textures, shadows and effects from the map. Players' avatars stay as they are. Turn it off to bring everything back. |
 | FPS and ping | A small counter in the corner of the screen. |
+| Fake buyer | When the game offers a purchase, a copy of the purchase window opens with the Robux you choose (**Robux visual**) and, if you want, the **Roblox Plus** price. **Buy** only plays the purchase on your screen: nothing is bought, the game is never told and your real Robux are not touched. Real purchases don't open while it is on. |
 | Rejoin / Server hop | Join the same server again, or move to another one. |
 
-Some tools need your executor to support them (FPS limit and anti-kick). If it doesn't, the tool tells you.
+Some tools need your executor to support them (FPS limit, anti-kick and fake buyer). If it doesn't, the tool tells you.
 
 ## Install a plugin someone shared
 

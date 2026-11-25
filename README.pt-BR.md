@@ -22,9 +22,10 @@ O que ele tem:
 | Background mode | Para de desenhar o jogo enquanto o Roblox está em segundo plano. Esquenta e gasta menos bateria. |
 | Low graphics | Mais FPS: tira texturas, sombras e efeitos do mapa. O avatar dos players fica como está. Desligando, tudo volta. |
 | FPS and ping | Um contador pequeno no canto da tela. |
+| Fake buyer | Quando o jogo oferece uma compra, abre uma cópia da janela de compra com os Robux que você escolher (**Robux visual**) e, se quiser, o preço do **Roblox Plus**. **Buy** só faz a compra na sua tela: nada é comprado, o jogo não fica sabendo e seus Robux de verdade não mudam. Compras de verdade não abrem enquanto estiver ligado. |
 | Rejoin / Server hop | Entrar de novo no mesmo servidor, ou ir pra outro. |
 
-Algumas ferramentas dependem do seu executor (FPS limit e anti-kick). Se ele não tiver suporte, a ferramenta avisa.
+Algumas ferramentas dependem do seu executor (FPS limit, anti-kick e fake buyer). Se ele não tiver suporte, a ferramenta avisa.
 
 ## Instalar um plugin que alguém compartilhou
 

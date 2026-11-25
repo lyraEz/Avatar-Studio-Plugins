@@ -9,6 +9,7 @@
       * Background mode stops drawing the game while Roblox is in the background
       * Low graphics    removes textures, shadows and effects for more FPS (players' avatars stay as they are)
       * FPS and ping    a small counter in the corner of the screen
+      * Fake buyer      a copy of the purchase window with visual Robux and Roblox Plus, only on your screen
       * Rejoin / Server hop
 
     This file is also an example of how a plugin is made. A plugin is a Lua file that returns a table with its
@@ -26,9 +27,9 @@ local Lighting = game:GetService("Lighting")
 
 return {
     Name = "Lyra Tools",
-    Version = "1.0.2",
+    Version = "1.1.0",
     Author = "lyraEz",
-    Description = "Anti-fling, anti-kick, anti-AFK, FPS boost, an FPS and ping counter, rejoin and server hop.",
+    Description = "Anti-fling, anti-kick, anti-AFK, FPS boost, an FPS and ping counter, a visual fake buyer, rejoin and server hop.",
 
     Load = function(api)
         local player = api.Player
@@ -461,6 +462,13 @@ return {
         ------------------------------------------------------------------------------------------------------------
         -- FPS AND PING COUNTER
         ------------------------------------------------------------------------------------------------------------
+        -- The executor's hidden container when it has one, so the game can't see or remove what the plugin draws.
+        local function guiParent()
+            local parent = type(gethui) == "function" and select(2, pcall(gethui)) or nil
+            if typeof(parent) ~= "Instance" then parent = player:FindFirstChildOfClass("PlayerGui") end
+            return parent
+        end
+
         local counter = {}
         local function showCounter(on)
             if counter.Gui then counter.Gui:Destroy(); counter.Gui = nil end
@@ -473,10 +481,7 @@ return {
             label.TextColor3 = Color3.fromRGB(235, 230, 255); label.Font = Enum.Font.GothamBold; label.TextSize = 13; label.Text = "FPS --  ·  -- ms"
             Instance.new("UICorner", label).CornerRadius = UDim.new(0, 8)
             label.Parent = gui
-            -- The executor's hidden container when it has one, so the game can't see or remove it.
-            local parent = type(gethui) == "function" and select(2, pcall(gethui)) or nil
-            if typeof(parent) ~= "Instance" then parent = player:FindFirstChildOfClass("PlayerGui") end
-            gui.Parent = parent
+            gui.Parent = guiParent()
             counter.Gui = api.track(gui)
             counter.Label = label
         end
@@ -500,6 +505,312 @@ return {
             Save = "Counter",
             Changed = showCounter,
         })
+
+        ------------------------------------------------------------------------------------------------------------
+        -- FAKE BUYER (only on your screen)
+        -- When the game asks to sell you something (a game pass, a product, an item or a bundle), Roblox's purchase
+        -- window does not open: a copy drawn by the plugin shows up instead, with the Robux you typed and, if you
+        -- want, the Roblox Plus price. "Buy" only plays the purchase on your screen and takes the price from your
+        -- visual Robux. Nothing is bought, the game is never told about it and your real Robux are not touched.
+        -- The item's name, price and picture are read with GetProductInfo, the same read-only lookup games use.
+        ------------------------------------------------------------------------------------------------------------
+        api.section({Title = "Fake buyer", Text = "Only on your screen: nothing is bought and the game is never told."})
+        local MarketplaceService = game:GetService("MarketplaceService")
+        local ROBUX = utf8.char(0xE002) -- the Robux icon inside Roblox texts
+        local colors = {
+            Panel = Color3.fromRGB(25, 27, 31),
+            Text = Color3.fromRGB(240, 242, 245),
+            Soft = Color3.fromRGB(160, 163, 170),
+            Line = Color3.fromRGB(62, 65, 72),
+            Blue = Color3.fromRGB(51, 95, 255),
+            Grey = Color3.fromRGB(58, 61, 68),
+        }
+        local promptKinds = {
+            PromptGamePassPurchase = "GamePass",
+            PromptProductPurchase = "Product",
+            PromptPurchase = "Asset",
+            PromptBundlePurchase = "Bundle",
+        }
+        local infoTypes = {
+            GamePass = Enum.InfoType.GamePass,
+            Product = Enum.InfoType.Product,
+            Asset = Enum.InfoType.Asset,
+            Bundle = Enum.InfoType.Bundle,
+        }
+        local thumbnailTypes = {GamePass = "GamePass", Asset = "Asset", Bundle = "BundleThumbnail"}
+        local fake = {On = false, Hooked = false, Pending = nil}
+        local prompt = {}
+        local balanceControl, plusSwitch, fakeSwitch
+
+        local function withCommas(value)
+            local sign, digits = tostring(math.floor(value)):match("^(-?)(%d+)$")
+            if not digits then return tostring(value) end
+            digits = digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+            return sign .. digits
+        end
+        -- Item names go inside rich text, where < > & " ' have a meaning of their own.
+        local function escaped(value)
+            return (value:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"):gsub("'", "&apos;"))
+        end
+        local function balance()
+            return math.max(0, math.floor(tonumber(balanceControl and balanceControl.Get()) or 0))
+        end
+        local function plusOn()
+            return plusSwitch ~= nil and plusSwitch.Get() == true
+        end
+        local function plusPrice(price)
+            return math.floor(price * 0.8 + 0.5) -- Plus takes 20% off, like 75 -> 60
+        end
+
+        local function make(class, properties, parent)
+            local item = Instance.new(class)
+            for property, value in pairs(properties) do item[property] = value end
+            item.Parent = parent
+            return item
+        end
+        local function round(item, radius)
+            make("UICorner", {CornerRadius = UDim.new(0, radius)}, item)
+        end
+        local function text(parent, properties)
+            local label = make("TextLabel", {
+                BackgroundTransparency = 1, BorderSizePixel = 0, Font = Enum.Font.BuilderSans, TextSize = 15,
+                TextColor3 = colors.Text, TextXAlignment = Enum.TextXAlignment.Left, RichText = true,
+            }, parent)
+            for property, value in pairs(properties) do label[property] = value end
+            return label
+        end
+        local function blueButton(parent, caption, order)
+            local button = make("TextButton", {
+                LayoutOrder = order, Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = colors.Blue, BorderSizePixel = 0,
+                AutoButtonColor = true, Font = Enum.Font.BuilderSansBold, TextSize = 16, TextColor3 = Color3.new(1, 1, 1),
+                Text = caption,
+            }, parent)
+            round(button, 8)
+            return button
+        end
+
+        local function closePrompt()
+            if prompt.Gui then prompt.Gui:Destroy() end
+            prompt = {}
+        end
+        -- The dark backdrop and the empty window every step of the purchase is drawn in.
+        local function newWindow(item, step)
+            closePrompt()
+            local gui = make("ScreenGui", {
+                Name = "LyraToolsPurchase", ResetOnSpawn = false, DisplayOrder = 1001, IgnoreGuiInset = true,
+                ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+            })
+            -- Covers the screen so taps don't reach the game behind the window, like Roblox's own one.
+            make("TextButton", {
+                Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.45,
+                BorderSizePixel = 0, AutoButtonColor = false, Text = "",
+            }, gui)
+            local window = make("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(380, 0),
+                AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = colors.Panel, BorderSizePixel = 0,
+            }, gui)
+            round(window, 12)
+            make("UIPadding", {
+                PaddingTop = UDim.new(0, 16), PaddingBottom = UDim.new(0, 16),
+                PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16),
+            }, window)
+            make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 14)}, window)
+            -- Small phones get a smaller window instead of one cut at the edges.
+            local camera = workspace.CurrentCamera
+            local width = camera and camera.ViewportSize.X or 1000
+            make("UIScale", {Scale = math.clamp((width - 24) / 380, 0.6, 1)}, window)
+            gui.Parent = guiParent()
+            prompt = {Gui = api.track(gui), Window = window, Item = item, Step = step}
+            return window
+        end
+        local function header(window, title)
+            local bar = make("Frame", {LayoutOrder = 1, Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1}, window)
+            text(bar, {Size = UDim2.new(1, -200, 1, 0), Font = Enum.Font.BuilderSansBold, TextSize = 18, Text = title})
+            text(bar, {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -36, 0.5, 0), Size = UDim2.new(0, 160, 1, 0),
+                TextXAlignment = Enum.TextXAlignment.Right, Font = Enum.Font.BuilderSansBold, TextSize = 14,
+                Text = ROBUX .. " " .. withCommas(balance()),
+            })
+            local close = make("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Size = UDim2.fromOffset(28, 28),
+                BackgroundTransparency = 1, Font = Enum.Font.BuilderSansBold, TextSize = 18, TextColor3 = colors.Text,
+                Text = "X",
+            }, bar)
+            close.MouseButton1Click:Connect(closePrompt)
+        end
+
+        local showPrompt
+        local function showDone(item)
+            local window = newWindow(item, "done")
+            header(window, "Purchase completed")
+            text(window, {
+                LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, TextWrapped = true,
+                TextColor3 = colors.Soft, Text = "You have successfully bought <b>" .. escaped(item.Name) .. "</b>.",
+            })
+            blueButton(window, "OK", 3).MouseButton1Click:Connect(closePrompt)
+        end
+        showPrompt = function(item)
+            local window = newWindow(item, "buy")
+            header(window, "Buy item")
+            local plus = plusOn()
+            local cost = plus and plusPrice(item.Price) or item.Price
+
+            local row = make("Frame", {LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 64), BackgroundTransparency = 1}, window)
+            local picture = make("ImageLabel", {
+                Size = UDim2.fromOffset(64, 64), BackgroundColor3 = colors.Grey, BorderSizePixel = 0,
+                Image = item.Image, ScaleType = Enum.ScaleType.Fit,
+            }, row)
+            round(picture, 8)
+            text(row, {
+                Position = UDim2.fromOffset(78, 6), Size = UDim2.new(1, -78, 0, 22), Font = Enum.Font.BuilderSansBold,
+                TextSize = 16, TextTruncate = Enum.TextTruncate.AtEnd, RichText = false, Text = item.Name,
+            })
+            local price = ROBUX .. " " .. withCommas(cost)
+            if plus and cost ~= item.Price then
+                price = price .. '  <font color="#A0A3AA"><s>' .. ROBUX .. " " .. withCommas(item.Price) .. "</s></font>"
+            end
+            text(row, {
+                Position = UDim2.fromOffset(78, 34), Size = UDim2.new(1, -78, 0, 22), Font = Enum.Font.BuilderSansBold,
+                Text = price,
+            })
+
+            if plus and cost ~= item.Price then
+                local saving = make("Frame", {
+                    LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1,
+                }, window)
+                round(saving, 8)
+                make("UIStroke", {Color = colors.Line, Thickness = 1}, saving)
+                -- The Plus icon: a ring with a plus inside.
+                local badge = make("Frame", {
+                    AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 0), Size = UDim2.fromOffset(18, 18),
+                    BackgroundTransparency = 1,
+                }, saving)
+                round(badge, 9)
+                make("UIStroke", {Color = colors.Text, Thickness = 1.5}, badge)
+                text(badge, {
+                    Size = UDim2.fromScale(1, 1), TextXAlignment = Enum.TextXAlignment.Center,
+                    Font = Enum.Font.BuilderSansBold, TextSize = 15, Text = "+",
+                })
+                text(saving, {
+                    Position = UDim2.fromOffset(40, 0), Size = UDim2.new(1, -52, 1, 0), TextSize = 14,
+                    Text = "Saving <b>" .. ROBUX .. " " .. withCommas(item.Price - cost) .. "</b> with Plus",
+                })
+            end
+
+            local enough = balance() >= cost
+            local buy = blueButton(window, enough and "Buy" or "Not enough Robux", 4)
+            if not enough then
+                buy.BackgroundColor3 = colors.Grey
+                buy.AutoButtonColor = false
+                return
+            end
+            local current = prompt
+            buy.MouseButton1Click:Connect(function()
+                if prompt ~= current or current.Buying then return end
+                current.Buying = true
+                buy.Text = "Buying…"
+                buy.BackgroundColor3 = colors.Grey
+                buy.AutoButtonColor = false
+                api.spawn(function()
+                    task.wait(1.2) -- a real purchase takes a moment too
+                    if prompt ~= current or not api.alive() then return end
+                    balanceControl.Set(math.max(0, balance() - cost))
+                    showDone(item)
+                end)
+            end)
+        end
+
+        -- Reads what the game is selling. A failed lookup still opens the window, with what is known.
+        local function itemFromGame(kind, id)
+            local item = {Name = "Item", Price = 0, Image = ""}
+            local ok, info = pcall(function() return MarketplaceService:GetProductInfo(id, infoTypes[kind]) end)
+            if ok and type(info) == "table" then
+                item.Name = type(info.Name) == "string" and info.Name or item.Name
+                item.Price = math.max(0, math.floor(tonumber(info.PriceInRobux) or 0))
+                local icon = tonumber(info.IconImageAssetId)
+                if icon and icon > 0 then item.Image = "rbxassetid://" .. icon end
+            end
+            if item.Image == "" and thumbnailTypes[kind] then
+                item.Image = string.format("rbxthumb://type=%s&id=%d&w=150&h=150", thumbnailTypes[kind], id)
+            end
+            return item
+        end
+        -- The hook only leaves a note; the window is opened from the plugin's own thread, every frame at most.
+        api.every(0, function()
+            local pending = fake.Pending
+            if not pending or not fake.On then return end
+            fake.Pending = nil
+            api.spawn(function()
+                local item = itemFromGame(pending.Kind, pending.Id)
+                if fake.On and api.alive() then showPrompt(item) end
+            end)
+        end)
+
+        -- The game's purchase requests are caught here, so Roblox's real window never opens while this is on.
+        local function hookPrompts()
+            if fake.Hooked then return true end
+            if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then return false end
+            local wrap = type(newcclosure) == "function" and newcclosure or function(fn) return fn end
+            local original
+            original = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+                if fake.On and self == MarketplaceService and api.alive() then
+                    local kind = promptKinds[getnamecallmethod()]
+                    if kind and not (type(checkcaller) == "function" and checkcaller()) then
+                        local id = tonumber((select(2, ...)))
+                        if id and id > 0 and id == math.floor(id) then fake.Pending = {Kind = kind, Id = id} end
+                        return nil
+                    end
+                end
+                return original(self, ...)
+            end))
+            fake.Hooked = true
+            return true
+        end
+
+        fakeSwitch = api.toggle({
+            Title = "Robux visual",
+            Description = "When the game offers a purchase, a copy of Roblox's window opens with your visual Robux. Buy plays the purchase on your screen only. Real purchases don't open while this is on.",
+            Save = "FakeBuyer",
+            Changed = function(on)
+                if on and not hookPrompts() then
+                    api.notify("Your executor can't do this (it has no hookmetamethod).", "warning")
+                    if fakeSwitch then fakeSwitch.Set(false, true) end
+                    fake.On = false
+                    return
+                end
+                fake.On = on
+                fake.Pending = nil
+                if not on then closePrompt() end
+            end,
+        })
+        local function redraw()
+            if prompt.Step == "buy" and prompt.Item then showPrompt(prompt.Item) end
+        end
+        balanceControl = api.number({
+            Title = "Robux",
+            Description = "How many Robux the purchase window shows. Each visual purchase takes its price from here.",
+            Min = 0,
+            Max = 999999999,
+            Step = 100,
+            Default = 15041,
+            Save = "FakeRobux",
+            Changed = redraw,
+        })
+        plusSwitch = api.toggle({
+            Title = "Roblox Plus",
+            Description = "Shows the Plus icon and the Plus price (20% off) in the purchase window.",
+            Save = "FakePlus",
+            Changed = redraw,
+        })
+        api.button({
+            Title = "Try it",
+            Description = "Opens the purchase window with an example item.",
+            Button = "Open",
+            Pressed = function()
+                showPrompt({Name = "Theme Prop", Price = 75, Image = ""})
+            end,
+        })
+        api.onUnload(closePrompt)
 
         ------------------------------------------------------------------------------------------------------------
         -- SERVER
